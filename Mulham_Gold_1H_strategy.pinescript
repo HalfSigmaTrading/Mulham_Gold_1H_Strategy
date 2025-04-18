@@ -1,0 +1,109 @@
+//@version=6
+// STrategy inspired by this https://www.youtube.com/watch?v=rZlRz-dg5LE but does not seam to have a high winrate
+// To be executed using the 5min Timeframe
+strategy("Mulham Gold 1H Strategy", overlay=true, initial_capital=20000, default_qty_type=strategy.fixed, default_qty_value=2, margin_long=0, margin_short=0)
+
+timeinrange(sess) => not na(time(timeframe.period, sess, "America/New_York")) ? true : false
+
+// Inputs
+timeoutPeriod = input.int(40*5, "Time based Exit (minutes)", minval=1)
+rwr = input.float(2, "Stop Loss cursor", step=0.1, group="Fixed profit taking")
+
+// Variables
+var int state        = 0
+var float range_Low  = 0
+var float range_High = 0
+var float waiting_time_min = 5
+var float TP_to_show = 0
+var float SL_to_show = 0
+var float entryPrice = 0
+var bool pending_order = false
+var bool longEntry = false
+var bool shortEntry = false
+var bool sweep_low = false
+var bool sweep_high = false
+var int entryTime = 0
+var int exitTime = 0
+var bool long = false
+point = syminfo.mintick * 10  // Ajustement en fonction de l'échelle de l'actif
+lowest = ta.lowest(12)
+highest = ta.highest(12)
+
+
+if state == 0 and timeinrange("2055-2100")
+    // Recherche du Highest High et Lowest Low des 5 dernières minutes
+    range_Low := lowest
+    range_High:= highest
+    label.new(bar_index, low-10, text="algo start", color=color.blue, textcolor=color.white, style=label.style_label_up)
+    label.new(bar_index-6, range_High, text="H1 High: "+ str.tostring(range_High), color=color.blue, textcolor=color.white, style=label.style_label_down)
+    line.new(x1 = bar_index-12, y1 = range_High, x2 = bar_index + 10, y2 = range_High, color = color.blue, width = 1, extend = extend.none )
+    label.new(bar_index-7,range_Low, text="H1 Low: "+ str.tostring(range_Low), color=color.blue, textcolor=color.white, style=label.style_label_up)
+    line.new(x1 = bar_index-12, y1 = range_Low, x2 = bar_index + 10, y2 = range_Low, color = color.blue, width = 1, extend = extend.none )
+    sweep_low := false
+    sweep_high := false
+    state := 1
+
+if state == 1 and timeinrange("2100-2200")
+    if low < range_Low
+        if close <= range_Low
+            label.new(bar_index, low, text="1H range breakout", color=color.blue, textcolor=color.white, style=label.style_label_up)
+        else
+            label.new(bar_index, low, text="1H range simple Stab", color=color.blue, textcolor=color.white, style=label.style_label_up)
+        sweep_low := true
+        state := 2
+    if high > range_High
+        if close >= range_High
+            label.new(bar_index, high, text="1H range breakout", color=color.blue, textcolor=color.white, style=label.style_label_down)
+        else
+            label.new(bar_index, high, text="1H range simple Stab", color=color.blue, textcolor=color.white, style=label.style_label_down)
+        sweep_high := true
+        state := 2
+
+if state == 2
+    if sweep_low and strategy.position_size == 0 and not pending_order and (close > range_Low) and (close > open)
+        entryPrice := close
+        SL_to_show := math.round_to_mintick(entryPrice-(range_High-range_Low)*point/rwr)
+        TP_to_show := close+(range_High-range_Low)*point*2
+        reward_risk = math.round((TP_to_show-entryPrice)/(entryPrice-SL_to_show),1)
+        longEntry := true
+        strategy.order("Long", strategy.long)
+        strategy.exit("Long Exit", from_entry="Long", stop=SL_to_show, limit=TP_to_show)
+        box.new(left=bar_index, right=bar_index + 8, top=entryPrice, bottom=SL_to_show, border_color=color.red, bgcolor=color.new(color.red, 80), text="SL: " + str.tostring(entryPrice-SL_to_show) +"\nRW:R: "+ str.tostring(reward_risk), text_size = size.small, text_halign = text.align_right, text_valign = text.align_bottom)
+        box.new(left=bar_index, right=bar_index + 8, top=TP_to_show, bottom=entryPrice, border_color=color.green, bgcolor=color.new(color.green, 80))
+        sweep_low := false
+        pending_order := true
+    
+    if sweep_high and strategy.position_size == 0 and not pending_order and (close < range_High) and (close < open)
+        entryPrice := close
+        SL_to_show := math.round_to_mintick(entryPrice+(range_High-range_Low)*point/rwr)
+        TP_to_show := close-(range_High-range_Low)*point*2
+        reward_risk = math.round((entryPrice-TP_to_show)/(SL_to_show-entryPrice),1)
+        shortEntry := true
+        strategy.entry("Short", strategy.short)
+        strategy.exit("Short Exit", from_entry="Short", stop=SL_to_show, limit=TP_to_show)
+        box.new(left=bar_index, right=bar_index + 8, top=SL_to_show, bottom=entryPrice, border_color=color.red, bgcolor=color.new(color.red, 80), text="SL: " + str.tostring(SL_to_show-entryPrice) +"\nRW:R: "+ str.tostring(reward_risk), text_size = size.small, text_halign = text.align_right, text_valign = text.align_top)
+        box.new(left=bar_index, right=bar_index + 8, top=entryPrice, bottom=TP_to_show, border_color=color.green, bgcolor=color.new(color.green, 80))
+        sweep_high := false
+        pending_order := true
+
+
+
+// Traitement spécifique à l'ouverture de la position
+if (strategy.position_size[1] == 0) and (strategy.position_size != 0)
+    entryTime := time
+    pending_order := false
+
+
+if strategy.position_size != 0
+    if (time - entryTime) >= timeoutPeriod * 60000  // Convert minutes to milliseconds
+        strategy.close_all(comment="Time Exit")
+        pending_order := false
+
+
+if timeinrange("2350-2355") and strategy.position_size == 0
+    state := 0
+    sweep_high := false
+    sweep_low := false
+    pending_order := false
+    label.new(bar_index, high, text="End of day", color=color.blue, textcolor=color.white, style=label.style_label_down)
+    strategy.cancel_all()
